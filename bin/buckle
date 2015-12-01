@@ -1,0 +1,9 @@
+#!/usr/bin/env ruby
+
+begin
+  require 'buckle'
+
+  Buckle.run
+rescue LoadError => e
+  $stderr.puts "Couldn't load buckle: #{e.message}"
+end
