@@ -1,8 +1,177 @@
+require 'pp'
+
 module Buckle
-  module Reading
+  module ReaderDSL
+    def self.included(base)
+      base.extend(ClassMethods)
+    end
+
+    InvalidReaderError = Class.new(StandardError)
+
+    class Reader
+      attr_reader :name, :each, :post
+
+      def initialize(name, each, post)
+        @name = name
+        @each = each
+        @post = post
+      end
+
+      def read(instance, input)
+        memo = []
+        loop do
+          char = input.getc
+          break if yield char
+          result = instance.instance_exec(input, char, &each)
+          memo << result unless result.nil?
+        end
+        post.call(memo)
+      end
+    end
+
+    class MatchReader < Reader
+      attr_reader :match, :nonmatch
+
+      def initialize(name, match, nonmatch, each, post)
+        super(name, each, post)
+
+        @match = match
+        @nonmatch = nonmatch
+      end
+
+      def begin_expr?(input, char)
+        test_and_unget(input, char, &match)
+      end
+
+      def read(instance, input)
+        super(instance, input) do |char|
+          char.nil? || nonmatch_handled?(input, char)
+        end
+      end
+
+      private
+
+      def test_and_unget(input, char)
+        if yield char
+          input.ungetc(char)
+          true
+        else
+          false
+        end
+      end
+
+      def nonmatch_handled?(input, char)
+        test_and_unget(input, char, &nonmatch)
+      end
+    end
+
+    class DelimitedReader < Reader
+      attr_reader :open, :close
+
+      def initialize(name, open, close, each, post)
+        super(name, each, post)
+
+        @open = open
+        @close = close
+      end
+
+      def begin_expr?(input, char)
+        char == open
+      end
+
+      def read(instance, input)
+        super(instance, input) do |char|
+          raise_eos_error if char.nil?
+          end_expr?(char)
+        end
+      end
+
+      private
+
+      def end_expr?(char)
+        char == close
+      end
+
+      def raise_eos_error
+        raise SyntaxError, 'unexpected end of stream'
+      end
+    end
+
+    module ClassMethods
+      def defreader(name, match: nil, nonmatch: nil,
+                    delimiters: nil, each: nil, post: nil)
+        if match.nil? && (delimiters.nil? || delimiters.empty?)
+          raise InvalidReaderError, 'must specify one of match or delimiters'
+        end
+
+        each, post = extract_processors(each, post)
+        if match
+          match_l, nonmatch_l = extract_matchers(match, nonmatch)
+          readers << MatchReader.new(name, match_l, nonmatch_l, each, post)
+        else
+          open, close = extract_delimiters(delimiters)
+          readers << DelimitedReader.new(name, open, close, each, post)
+        end
+      end
+
+      private
+
+      def extract_processors(each, post)
+        default_each = lambda { |input, char| char }
+        default_post = lambda { |memo| memo }
+
+        [each || default_each, post || default_post]
+      end
+
+      def extract_matchers(match, nonmatch)
+        match_lambda = lambda { |char| char =~ match }
+        nonmatch_lambda = extract_nonmatch(match_lambda, nonmatch)
+
+        [match_lambda, nonmatch_lambda]
+      end
+
+      def extract_nonmatch(match, nonmatch)
+        if nonmatch
+          lambda { |char| char =~ nonmatch }
+        else
+          lambda { |char| !match.call(char) }
+        end
+      end
+
+      def extract_delimiters(delimiters)
+        open, close = Array[delimiters].flatten[0..1]
+        [open, close || open]
+      end
+    end
+  end
+
+  class Reader
+    include ReaderDSL
+
     SyntaxError = Class.new(StandardError)
 
-    def self.read(input)
+    class << self
+      def readers
+        @readers ||= []
+      end
+    end
+
+    defreader :whitespace, match: /\s/,
+      post: ->(memo) { nil }
+
+    defreader :number, match: /\d/,
+      post: ->(memo) { memo.join.to_i }
+
+    defreader :symbol, match: /[a-zA-Z+\-*\/%_=<>]/, nonmatch: /[\s"()]/,
+      post: ->(memo) { memo.join.to_sym }
+
+    defreader :string, delimiters: '"',
+      post: -> (memo) { memo.join }
+
+    defreader :list, delimiters: ['(', ')'],
+      each: -> (input, char) { input.ungetc(char); read_real(input) }
+
+    def read(input)
       sexprs = []
 
       while !input.eof?
@@ -14,118 +183,15 @@ module Buckle
 
     private
 
-    def self.read_real(input)
-      next_char = input.getc
-
-      case
-      when whitespace?(next_char)
-        read_whitespace(input)
-      when digit?(next_char)
-        input.ungetc(next_char) # return first char for reading
-        read_number(input)
-      when string_open?(next_char)
-        read_string(input)
-      when symbol_open?(next_char)
-        input.ungetc(next_char) # return first char for reading
-        read_symbol(input)
-      when list_open?(next_char)
-        read_list(input)
-      else
-        raise SyntaxError, 'unknown form'
-      end
-    end
-
-    def self.whitespace?(char)
-      char =~ /\s/
-    end
-
-    def self.read_whitespace(input)
-      while !input.eof?
-        char = input.getc
-        if !whitespace?(char)
-          input.ungetc(char)
-          break
+    def read_real(input)
+      char = input.getc
+      self.class.readers.each do |reader|
+        if reader.begin_expr?(input, char)
+          return reader.read(self, input)
         end
       end
-    end
 
-    def self.digit?(char)
-      char =~ /\d/
-    end
-
-    def self.read_number(input)
-      digits = []
-      while !input.eof?
-        char = input.getc
-        if digit?(char)
-          digits << char
-        else
-          input.ungetc(char)
-          break
-        end
-      end
-      digits.join.to_i
-    end
-
-    def self.string_open?(char)
-      char == '"'
-    end
-    class << self
-      alias_method :string_close?, :string_open?
-    end
-
-    def self.read_string(input)
-      chars = []
-      loop do
-        char = input.getc
-        raise_syntax_error if char.nil?
-        break if string_close?(char)
-        chars << char
-      end
-      chars.join
-    end
-
-    def self.symbol_open?(char)
-      char =~ /[a-zA-Z+\-*\/%_=<>]/
-    end
-
-    def self.symbol_close?(char)
-      char =~ /[\s"()]/
-    end
-
-    def self.read_symbol(input)
-      chars = []
-      while !input.eof?
-        char = input.getc
-        break if symbol_close?(char)
-        chars << char
-      end
-      chars.join.to_sym
-    end
-
-    def self.list_open?(char)
-      char == '('
-    end
-
-    def self.list_close?(char)
-      char == ')'
-    end
-
-    def self.read_list(input)
-      forms = []
-      loop do
-        char = input.getc
-        raise_syntax_error if char.nil?
-        break if list_close?(char)
-        input.ungetc(char)
-        form = read_real(input)
-        forms << form unless form.nil?
-      end
-      forms
-    end
-
-    def self.raise_syntax_error
-      raise SyntaxError, 'unexpected end of stream'
+      raise SyntaxError, 'unrecognized form'
     end
   end
 end
