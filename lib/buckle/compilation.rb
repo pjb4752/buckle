@@ -5,7 +5,7 @@ module Buckle
   module Compilation
     def self.compile(input)
       sexprs = Reading.read(input)
-      Printing.dump_forms(sexprs)
+      Printing.dump(forms)
     end
   end
 end

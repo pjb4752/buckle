@@ -1,25 +1,26 @@
 module Buckle
   module Printing
-
-    def self.dump_forms(sexprs)
-      forms = recursive_dump(sexprs)
-      puts forms
+    def self.dump(forms, io = $stdout)
+      io.puts(recursive_dump(forms))
     end
 
     private
 
-    def self.recursive_dump(sexprs)
-      case sexprs
+    def self.recursive_dump(forms)
+      case forms
       when Array
-        forms = sexprs.map { |s| recursive_dump(s) }.join(' ')
-        "(#{forms})"
-      when Fixnum
-        sexprs
-      when String
-        sexprs
-      when Symbol
-        sexprs.to_s
+        parenthesize(recursive_map(forms))
+      when Fixnum, String, Symbol
+        forms.to_s
       end
+    end
+
+    def self.recursive_map(forms)
+      forms.map { |f| recursive_dump(f) }.join(' ')
+    end
+
+    def self.parenthesize(forms)
+      '(%s)' % forms
     end
   end
 end
