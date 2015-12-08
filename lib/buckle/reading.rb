@@ -1,5 +1,3 @@
-require 'pp'
-
 module Buckle
   module ReaderDSL
     def self.included(base)
