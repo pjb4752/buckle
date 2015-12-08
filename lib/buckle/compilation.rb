@@ -4,7 +4,7 @@ require 'buckle/reading'
 module Buckle
   module Compilation
     def self.compile(input)
-      forms = Reader.new.read(input)
+      forms = Reader.read(input)
       Printing.dump(forms)
     end
   end

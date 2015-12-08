@@ -1,4 +1,30 @@
 module Buckle
+  module Readable
+    SyntaxError = Class.new(StandardError)
+
+    def read(input)
+      sexprs = []
+
+      while !input.eos?
+        result = read_real(input)
+        sexprs << result unless result.nil?
+      end
+      sexprs
+    end
+
+    private
+
+    def read_real(input)
+      readers.each do |reader|
+        if reader.begin_expr?(input)
+          return reader.read(input)
+        end
+      end
+
+      raise SyntaxError, 'unrecognized form'
+    end
+  end
+
   module ReaderDSL
     def self.included(base)
       base.extend(ClassMethods)
@@ -6,7 +32,15 @@ module Buckle
 
     InvalidReaderError = Class.new(StandardError)
 
-    class Reader
+    class << self
+      def readers
+        @readers ||= []
+      end
+    end
+
+    class FormReader
+      extend Buckle::Readable
+
       attr_reader :name, :post, :recurse
 
       def initialize(name, post, recurse)
@@ -15,14 +49,14 @@ module Buckle
         @recurse = recurse
       end
 
-      def read(instance, input)
+      def read(input)
         memo = []
         loop do
           char = input.first
           break if yield char
 
           if recurse
-            result = instance.send(:read_real, input)
+            result = self.class.send(:read_real, input)
           else
             result = char
             input.next
@@ -31,9 +65,13 @@ module Buckle
         end
         post.call(memo)
       end
+
+      def self.readers
+        ReaderDSL.readers
+      end
     end
 
-    class MatchReader < Reader
+    class MatchReader < FormReader
       attr_reader :match, :nonmatch
 
       def initialize(name, match, nonmatch, each, post)
@@ -47,8 +85,8 @@ module Buckle
         match.call(input.first)
       end
 
-      def read(instance, input)
-        super(instance, input) do |char|
+      def read(input)
+        super(input) do |char|
           char.nil? || nonmatch_handled?(char)
         end
       end
@@ -60,7 +98,7 @@ module Buckle
       end
     end
 
-    class DelimitedReader < Reader
+    class DelimitedReader < FormReader
       attr_reader :open, :close
 
       def initialize(name, open, close, each, post)
@@ -74,8 +112,8 @@ module Buckle
         test_and_eat(input, open)
       end
 
-      def read(instance, input)
-        super(instance, input) do |char|
+      def read(input)
+        super(input) do |char|
           raise_eos_error if char.nil?
           end_expr?(input)
         end
@@ -102,6 +140,10 @@ module Buckle
     end
 
     module ClassMethods
+      def readers
+        ReaderDSL.readers
+      end
+
       def defreader(name, match: nil, nonmatch: nil, delimiters: nil,
                     post: nil, recurse: false)
         if match.nil? && (delimiters.nil? || delimiters.empty?)
@@ -151,14 +193,7 @@ module Buckle
 
   class Reader
     include ReaderDSL
-
-    SyntaxError = Class.new(StandardError)
-
-    class << self
-      def readers
-        @readers ||= []
-      end
-    end
+    extend Readable
 
     defreader :whitespace, match: /\s/,
       post: ->(memo) { nil }
@@ -174,26 +209,5 @@ module Buckle
 
     defreader :list, delimiters: ['(', ')'], recurse: true
 
-    def read(input)
-      sexprs = []
-
-      while !input.eos?
-        result = read_real(input)
-        sexprs << result unless result.nil?
-      end
-      sexprs
-    end
-
-    private
-
-    def read_real(input)
-      self.class.readers.each do |reader|
-        if reader.begin_expr?(input)
-          return reader.read(self, input)
-        end
-      end
-
-      raise SyntaxError, 'unrecognized form'
-    end
   end
 end
