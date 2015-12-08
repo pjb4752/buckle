@@ -1,4 +1,5 @@
 require 'buckle/compilation'
+require 'buckle/text_stream'
 require 'buckle/version'
 
 module Buckle
@@ -30,9 +31,8 @@ module Buckle
   end
 
   def self.compile_file(filename)
-    File.open(filename, 'r') do |input|
-      Compilation.compile(input)
-    end
+    stream = TextStream.from_file(filename)
+    Compilation.compile(stream)
   end
 
   def self.bad_exit(message, status: 1)

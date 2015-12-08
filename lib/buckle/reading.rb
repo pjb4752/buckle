@@ -7,20 +7,26 @@ module Buckle
     InvalidReaderError = Class.new(StandardError)
 
     class Reader
-      attr_reader :name, :each, :post
+      attr_reader :name, :post, :recurse
 
-      def initialize(name, each, post)
+      def initialize(name, post, recurse)
         @name = name
-        @each = each
         @post = post
+        @recurse = recurse
       end
 
       def read(instance, input)
         memo = []
         loop do
-          char = input.getc
+          char = input.first
           break if yield char
-          result = instance.instance_exec(input, char, &each)
+
+          if recurse
+            result = instance.send(:read_real, input)
+          else
+            result = char
+            input.next
+          end
           memo << result unless result.nil?
         end
         post.call(memo)
@@ -37,29 +43,20 @@ module Buckle
         @nonmatch = nonmatch
       end
 
-      def begin_expr?(input, char)
-        test_and_unget(input, char, &match)
+      def begin_expr?(input)
+        match.call(input.first)
       end
 
       def read(instance, input)
         super(instance, input) do |char|
-          char.nil? || nonmatch_handled?(input, char)
+          char.nil? || nonmatch_handled?(char)
         end
       end
 
       private
 
-      def test_and_unget(input, char)
-        if yield char
-          input.ungetc(char)
-          true
-        else
-          false
-        end
-      end
-
-      def nonmatch_handled?(input, char)
-        test_and_unget(input, char, &nonmatch)
+      def nonmatch_handled?(char)
+        nonmatch.call(char)
       end
     end
 
@@ -73,21 +70,30 @@ module Buckle
         @close = close
       end
 
-      def begin_expr?(input, char)
-        char == open
+      def begin_expr?(input)
+        test_and_eat(input, open)
       end
 
       def read(instance, input)
         super(instance, input) do |char|
           raise_eos_error if char.nil?
-          end_expr?(char)
+          end_expr?(input)
         end
       end
 
       private
 
-      def end_expr?(char)
-        char == close
+      def end_expr?(input)
+        test_and_eat(input, close)
+      end
+
+      def test_and_eat(input, expr)
+        if input.first == expr
+          input.next # eat delimiter
+          true
+        else
+          false
+        end
       end
 
       def raise_eos_error
@@ -96,8 +102,8 @@ module Buckle
     end
 
     module ClassMethods
-      def defreader(name, match: nil, nonmatch: nil,
-                    delimiters: nil, each: nil, post: nil)
+      def defreader(name, match: nil, nonmatch: nil, delimiters: nil,
+                    post: nil, recurse: false)
         if match.nil? && (delimiters.nil? || delimiters.empty?)
           raise InvalidReaderError, 'must specify one of match or delimiters'
         end
@@ -105,10 +111,10 @@ module Buckle
         each, post = extract_processors(each, post)
         if match
           match_l, nonmatch_l = extract_matchers(match, nonmatch)
-          readers << MatchReader.new(name, match_l, nonmatch_l, each, post)
+          readers << MatchReader.new(name, match_l, nonmatch_l, post, recurse)
         else
           open, close = extract_delimiters(delimiters)
-          readers << DelimitedReader.new(name, open, close, each, post)
+          readers << DelimitedReader.new(name, open, close, post, recurse)
         end
       end
 
@@ -166,13 +172,12 @@ module Buckle
     defreader :string, delimiters: '"',
       post: -> (memo) { memo.join }
 
-    defreader :list, delimiters: ['(', ')'],
-      each: -> (input, char) { input.ungetc(char); read_real(input) }
+    defreader :list, delimiters: ['(', ')'], recurse: true
 
     def read(input)
       sexprs = []
 
-      while !input.eof?
+      while !input.eos?
         result = read_real(input)
         sexprs << result unless result.nil?
       end
@@ -182,9 +187,8 @@ module Buckle
     private
 
     def read_real(input)
-      char = input.getc
       self.class.readers.each do |reader|
-        if reader.begin_expr?(input, char)
+        if reader.begin_expr?(input)
           return reader.read(self, input)
         end
       end
