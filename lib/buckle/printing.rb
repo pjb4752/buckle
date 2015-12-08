@@ -10,13 +10,19 @@ module Buckle
       case forms
       when Array
         parenthesize(recursive_map(forms))
-      when Fixnum, String, Symbol
+      when String
+        quote(forms)
+      when Fixnum, Symbol
         forms.to_s
       end
     end
 
     def self.recursive_map(forms)
       forms.map { |f| recursive_dump(f) }.join(' ')
+    end
+
+    def self.quote(forms)
+      '"%s"' % forms
     end
 
     def self.parenthesize(forms)
