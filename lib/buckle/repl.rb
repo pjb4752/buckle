@@ -1,3 +1,5 @@
+require 'readline'
+
 require 'buckle/compilation'
 require 'buckle/exitable'
 require 'buckle/form_printer'
@@ -7,24 +9,18 @@ module Buckle
   class Repl
     include Exitable
 
-    attr_reader :history, :printer
+    attr_reader :printer
 
     def initialize(printer = FormPrinter.new)
-      @history = []
       @printer = printer
     end
 
     def run
-      loop do
-        input = prompt('> ')
-
-        normal_exit if input.nil?
-        input.chomp!
-        save_history(input)
-
+      while input = Readline.readline('> ', true)
         forms = compile(input)
         printer.printall(forms)
       end
+      normal_exit
     end
 
     private
@@ -37,11 +33,6 @@ module Buckle
     def compile(input)
       stream = TextStream.from_str(input)
       Compilation.compile(stream)
-    end
-
-    def save_history(input)
-      history.pop if history.size > 100
-      history << input
     end
   end
 end
