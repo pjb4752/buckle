@@ -1,14 +1,64 @@
-require 'buckle/compilation'
-require 'buckle/text_stream'
+require 'optparse'
+require 'ostruct'
+
+require 'buckle/exitable'
+require 'buckle/file_compiler'
+require 'buckle/repl'
 require 'buckle/version'
 
 module Buckle
-  def self.run
-    validate(filenames)
-    compile(filenames)
+  extend Exitable
+
+  def self.parse(arguments)
+    options = OpenStruct.new
+    options.interactive = false
+
+    opt_parser = OptionParser.new do |opts|
+      opts.banner = 'usage: buckle [options]'
+
+      opts.separator ''
+      opts.separator 'Specific options:'
+
+      opts.on('-i', '--interactive',
+              'Run the buckle compiler interactively') do |i|
+        options.interactive = true
+      end
+
+      opts.separator ''
+      opts.separator 'Common options:'
+
+      opts.on_tail('-h', '--help', 'Show this message') do
+        puts opts
+        exit
+      end
+
+      opts.on_tail('--version', 'Show version') do
+        puts Buckle::Version
+        exit
+      end
+    end
+
+    opt_parser.parse!
+    options
+  end
+
+  def self.run(arguments = ARGV)
+    options = parse(arguments)
+
+    if options.interactive
+      run_interactively
+    else
+      filenames = ARGV
+      validate(filenames)
+      compile(filenames)
+    end
   end
 
   private
+
+  def self.run_interactively
+    Repl.new.run
+  end
 
   def self.validate(filenames)
     bad_exit('expected filenames') if filenames.empty?
@@ -16,27 +66,11 @@ module Buckle
 
     unless not_found.empty?
       joined_names = not_found.join(', ')
-      bad_exit "bad filename(s): '#{joined_names}'"
+      bad_exit("bad filename(s): '#{joined_names}'")
     end
-  end
-
-  def self.filenames
-    ARGV
   end
 
   def self.compile(filenames)
-    filenames.each do |filename|
-      compile_file(filename)
-    end
-  end
-
-  def self.compile_file(filename)
-    stream = TextStream.from_file(filename)
-    Compilation.compile(stream)
-  end
-
-  def self.bad_exit(message, status: 1)
-    $stderr.puts "err: #{message}"
-    exit status
+    FileCompiler.new(filenames).compile
   end
 end
