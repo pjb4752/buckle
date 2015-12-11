@@ -25,11 +25,6 @@ module Buckle
 
     private
 
-    def prompt(message)
-      print(message)
-      gets
-    end
-
     def compile(input)
       stream = TextStream.from_str(input)
       Compilation.compile(stream)
