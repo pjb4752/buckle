@@ -1,33 +1,40 @@
 require 'readline'
 
-require 'buckle/compilation'
+require 'buckle/evaluator'
 require 'buckle/exitable'
-require 'buckle/form_printer'
+require 'buckle/printer'
 require 'buckle/text_stream'
 
 module Buckle
   class Repl
     include Exitable
 
-    attr_reader :printer
+    attr_reader :options, :evaluator, :printer
 
-    def initialize(printer = FormPrinter.new)
+    def initialize(options, evaluator = Evaluator.new, printer = Printer.new)
+      @options = options
+      @evaluator = evaluator
       @printer = printer
     end
 
     def run
-      while input = Readline.readline('> ', true)
-        forms = compile(input)
-        printer.printall(forms)
+      while raw = Readline.readline('> ', true)
+        input = to_stream(raw)
+        result = evaluate(input)
+
+        printer.printall(result)
       end
       normal_exit
     end
 
     private
 
-    def compile(input)
-      stream = TextStream.from_str(input)
-      Compilation.compile(stream)
+    def to_stream(input)
+      TextStream.from_str(input)
+    end
+
+    def evaluate(input)
+      evaluator.evaluate(input)
     end
   end
 end

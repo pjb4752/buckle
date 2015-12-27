@@ -1,23 +1,30 @@
+require 'buckle/types/vector'
+
 module Buckle
   module Readable
     SyntaxError = Class.new(StandardError)
 
     def read(input)
-      sexprs = []
+      sexprs = Types::List.new
 
       while !input.eos?
-        result = read_real(input)
-        sexprs << result unless result.nil?
+        result = try_read(self.class.readers, input)
+        sexprs.value << result unless result.nil?
       end
       sexprs
     end
 
     private
 
-    def read_real(input)
+    def try_read(readers, input)
+
       readers.each do |reader|
         if reader.begin_expr?(input)
-          return reader.read(input)
+          continuation = lambda do |new_input|
+            try_read(readers, new_input)
+          end
+
+          return reader.read(input, continuation)
         end
       end
 
@@ -39,7 +46,6 @@ module Buckle
     end
 
     class FormReader
-      extend Buckle::Readable
 
       attr_reader :name, :post, :recurse
 
@@ -49,14 +55,14 @@ module Buckle
         @recurse = recurse
       end
 
-      def read(input)
+      def read(input, continuation)
         memo = []
         loop do
           char = input.first
           break if yield char
 
           if recurse
-            result = self.class.send(:read_real, input)
+            result = continuation.call(input)
           else
             result = char
             input.next
@@ -85,8 +91,8 @@ module Buckle
         match.call(input.first)
       end
 
-      def read(input)
-        super(input) do |char|
+      def read(input, continuation)
+        super(input, continuation) do |char|
           char.nil? || nonmatch_handled?(char)
         end
       end
@@ -112,8 +118,8 @@ module Buckle
         test_and_eat(input, open)
       end
 
-      def read(input)
-        super(input) do |char|
+      def read(input, continuation)
+        super(input, continuation) do |char|
           raise_eos_error if char.nil?
           end_expr?(input)
         end
@@ -193,21 +199,31 @@ module Buckle
 
   class Reader
     include ReaderDSL
-    extend Readable
+    include Readable
 
     defreader :whitespace, match: /\s/,
       post: ->(memo) { nil }
 
     defreader :number, match: /\d/,
-      post: ->(memo) { memo.join.to_i }
+      post: ->(memo) { Types::Number.from_chars(memo) }
 
-    defreader :symbol, match: /[a-zA-Z+\-*\/%_=<>]/, nonmatch: /[\s"()]/,
-      post: ->(memo) { memo.join.to_sym }
+    defreader :symbol, match: /[a-zA-Z+\-*\/%_=<>]/, nonmatch: /[\s"()\[\]]/,
+      post: ->(memo) { Types::Symbol.from_chars(memo) }
+
+    defreader :keyword, match: /[:]/, nonmatch: /[\s"()\[\]]/,
+      post: ->(memo) { Types::Keyword.from_chars(memo) }
 
     defreader :string, delimiters: '"',
-      post: -> (memo) { memo.join }
+      post: ->(memo) { Types::String.from_chars(memo) }
 
-    defreader :list, delimiters: ['(', ')'], recurse: true
+    defreader :list, delimiters: ['(', ')'], recurse: true,
+      post: ->(memo) { Types::List.from_array(memo) }
+
+    defreader :vector, delimiters: ['[', ']'], recurse: true,
+      post: ->(memo) { Types::Vector.from_array(memo) }
+
+    defreader :map, delimiters: ['{', '}'], recurse: true,
+      post: ->(memo) { Types::Map.from_array(memo) }
 
   end
 end
