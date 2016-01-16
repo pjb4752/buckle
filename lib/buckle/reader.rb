@@ -5,13 +5,13 @@ module Buckle
     SyntaxError = Class.new(StandardError)
 
     def read(input)
-      sexprs = Types::List.new
+      forms = Types::List.new
 
       while !input.eos?
         result = try_read(self.class.readers, input)
-        sexprs.value << result unless result.nil?
+        forms.value << result unless result.nil?
       end
-      sexprs
+      forms
     end
 
     private
