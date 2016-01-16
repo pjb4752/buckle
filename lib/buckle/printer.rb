@@ -1,7 +1,8 @@
 module Buckle
   class Printer
-    def initialize(io = $stdout)
+    def initialize(io = $stdout, err = $stderr)
       @io = io
+      @err = err
     end
 
     def printall(forms)
@@ -14,9 +15,13 @@ module Buckle
       io.puts(form.to_s)
     end
 
+    def error(message)
+      err.puts(message)
+    end
+
     private
 
-    attr_reader :io
+    attr_reader :io, :err
 
   end
 end

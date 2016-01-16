@@ -5,7 +5,9 @@ module Buckle
     class Map < Any
 
       def initialize(value = {})
-        super(value)
+        super(value.map { |k, v|
+          [k.is_a?(::Symbol) ? Types::Keyword.new(k) : k, v]
+        }.to_h)
       end
 
       def to_s

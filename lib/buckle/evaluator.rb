@@ -13,7 +13,7 @@ module Buckle
 
     def evaluate(input)
       forms = reader.read(input)
-      compiler.analyze(forms)
+      compiler.compile(forms)
     end
   end
 end

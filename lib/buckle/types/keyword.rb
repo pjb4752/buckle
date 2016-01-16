@@ -4,6 +4,10 @@ module Buckle
   module Types
     class Keyword < Any
 
+      def initialize(value)
+        super(value.to_s)
+      end
+
       def to_s
         ":#{value}"
       end

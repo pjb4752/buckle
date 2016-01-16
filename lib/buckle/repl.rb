@@ -1,5 +1,6 @@
 require 'readline'
 
+require 'buckle/compiler'
 require 'buckle/evaluator'
 require 'buckle/exitable'
 require 'buckle/printer'
@@ -20,14 +21,19 @@ module Buckle
     def run
       while raw = Readline.readline('> ', true)
         input = to_stream(raw)
-        result = evaluate(input)
-
-        printer.printall(result)
+        do_loop(input)
       end
       normal_exit
     end
 
     private
+
+    def do_loop(input)
+      result = evaluate(input)
+      printer.printall(result)
+    rescue Compiler::CompilationError => e
+      printer.error("compilation error: #{e.message}")
+    end
 
     def to_stream(input)
       TextStream.from_str(input)
