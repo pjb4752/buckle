@@ -27,11 +27,11 @@ module Buckle
 
       def build_ast(forms)
         analyzed = forms.value.map do |form|
-          new_fn_stack(env)
+          new_scope(env)
           analyze(form)
         end
 
-        Types::Vector.new(analyzed)
+        return Types::Vector.new(analyzed), env
       end
 
       private
@@ -42,7 +42,7 @@ module Buckle
         raise error_klass, message
       end
 
-      def new_fn_stack(env)
+      def new_scope(env)
         env.value[Types::Keyword.new(:locals)] = Types::Vector.new
       end
 
@@ -62,6 +62,8 @@ module Buckle
           type: Types::Keyword.new(:global),
           value: expr
         })
+
+        global_id
       end
 
       def global_exists?(symbol)
@@ -112,7 +114,7 @@ module Buckle
 
       def analyze(form)
         if form.number? || form.string? || form.keyword?
-          analyze_constant(form)
+          analyze_literal(form)
         elsif form.symbol?
           analyze_symbol(form)
         elsif form.list?
@@ -122,10 +124,10 @@ module Buckle
         end
       end
 
-      def analyze_constant(form)
+      def analyze_literal(form)
         Types::Map.new({
-          op: Types::Keyword.new(:constant),
-          type: form.type,
+          op: Types::Keyword.new(:literal),
+          type: Types::Keyword.new(form.type),
           expr: form
         })
       end
@@ -145,8 +147,8 @@ module Buckle
       def analyze_list(list)
         if list.first.symbol? && special?(list.first)
           analyze_special(list.first, list.rest)
-        elsif list.first.symbol?
-          first = analyze_symbol(list.first)
+        elsif list.first.symbol? || list.first.list?
+          first = analyze(list.first)
 
           if first.value[Types::Keyword.new(:op)] == Types::Keyword.new(:fn)
             analyze_application(first, list.rest)
@@ -180,14 +182,20 @@ module Buckle
         elsif !name.symbol?
           error('first form must be symbol in def')
         elsif expr.symbol? && special?(expr)
-          error("cannot take value of special: #{rest.second}")
+          error("cannot take value of special: #{expr}")
         elsif global_exists?(name)
-          error("cannot redefine value #{rest.first}")
+          error("cannot redefine symbol #{name}")
         else
           value = analyze(expr)
-          register_global(name, value)
+
+          # check name here again for nested def
+          if global_exists?(name)
+            error("cannot redefine symbol #{name}")
+          end
+          var_id = register_global(name, value)
           Types::Map.new({
             op: Types::Keyword.new(:def),
+            id: var_id,
             name: name,
             init: value
           })
@@ -233,6 +241,7 @@ module Buckle
           Types::Map.new({
             op: Types::Keyword.new(:fn),
             type: Types::Keyword.new(:udf),
+            id: generate_id,
             arity: params.value.size,
             params: analyze_params(params),
             expr: analyze_subforms(exprs)
@@ -266,9 +275,14 @@ module Buckle
         if args.value.size != fn.value[Types::Keyword.new(:arity)]
           error('arity mismatch in apply')
         else
+          fntype = fn.value[Types::Keyword.new(:type)]
+          target = fntype == Types::Keyword.new(:builtin) ?
+            fn.value[Types::Keyword.new(:name)] :
+            target = fn.value[Types::Keyword.new(:id)]
           Types::Map.new({
             op: Types::Keyword.new(:apply),
-            target: fn,
+            fntype: fntype,
+            target: target,
             args: analyze_subforms(args)
           })
         end
@@ -276,15 +290,17 @@ module Buckle
 
       def analyze_params(symbols)
         analyzed = Types::Vector.new
+        symbol_table = env.value[Types::Keyword.new(:symbols)]
         local_names = env.value[Types::Keyword.new(:locals)]
         scope = local_names.value.push(Types::Map.new) # ::Array, not Vector
+
         symbols.value.each do |symbol|
           var_id = generate_id
           scope.last.value[symbol] = var_id
-          analyzed.value.push(Types::Map.new({
-            name: symbol,
-            id: var_id
-          }))
+          attrs = { name: symbol, id: var_id }
+          analyzed.value.push(Types::Map.new(attrs))
+          symbol_table.value[var_id] = Types::Map.new(
+            attrs.merge({ type: Types::Keyword.new(:param) }))
         end
 
         analyzed
