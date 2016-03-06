@@ -13,7 +13,9 @@ module Buckle
         Types::Symbol.new(:write) => Types::Map.new({ arity: 1 }),
         Types::Symbol.new(:read) => Types::Map.new({ arity: 1 }),
         Types::Symbol.new(:+) => Types::Map.new({ arity: 2 }),
-        Types::Symbol.new(:-) => Types::Map.new({ arity: 2 })
+        Types::Symbol.new(:-) => Types::Map.new({ arity: 2 }),
+        Types::Symbol.new(:<) => Types::Map.new({ arity: 2 }),
+        Types::Symbol.new(:'=') => Types::Map.new({ arity: 2 })
       })
 
       def initialize(error_klass, env = Types::Map.new)
@@ -263,7 +265,7 @@ module Buckle
           error('wrong number of forms in if')
         else
           Types::Map.new({
-            op: Types::Keyword(:if),
+            op: Types::Keyword.new(:if),
             test: analyze(rest.first),
             then: analyze(rest.second),
             else: analyze(rest.third)

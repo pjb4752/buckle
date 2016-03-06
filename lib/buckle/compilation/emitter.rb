@@ -1,4 +1,5 @@
 require 'buckle/types/all'
+require 'securerandom'
 
 module Buckle
   module Compilation
@@ -18,6 +19,10 @@ module Buckle
 
       def initialize
         @bytecodes = []
+      end
+
+      def label(value)
+        bytecodes << ".#{value}"
       end
 
       def load_numlit(value, register)
@@ -48,12 +53,12 @@ module Buckle
         bytecodes << "retb #{register}"
       end
 
-      def mark_fn(id)
-        bytecodes << ".#{id}"
+      def jump(label)
+        bytecodes << "jmp #{label}"
       end
 
-      def end_fn(id)
-        bytecodes << "\n\n"
+      def jump_false(label)
+        bytecodes << "jmpnt #{label}"
       end
 
       protected
@@ -130,6 +135,10 @@ module Buckle
 
       attr_reader :ast, :env, :registers, :codes, :cache
 
+      def generate_label
+        SecureRandom.uuid
+      end
+
       def emit(node)
         case node.value[kw(:op)]
         when kw(:literal)
@@ -140,6 +149,8 @@ module Buckle
           emit_def(node)
         when kw(:fn)
           emit_fn(node)
+        when kw(:if)
+          emit_if(node)
         when kw(:apply)
           emit_apply(node)
         end
@@ -184,10 +195,10 @@ module Buckle
         # codes.load_global(var_id, registers.current)
       end
 
-      def emit_fn(form)
-        exprs = form.value[kw(:expr)]
-        arity = form.value[kw(:arity)]
-        params = form.value[kw(:params)]
+      def emit_fn(node)
+        exprs = node.value[kw(:expr)]
+        arity = node.value[kw(:arity)]
+        params = node.value[kw(:params)]
         var_ids = params.value.map { |p| p.value[kw(:id)] }
 
         with_locals(var_ids) do
@@ -197,11 +208,32 @@ module Buckle
         end
       end
 
-      def emit_apply(form)
-        case form.value[kw(:fntype)]
+      def emit_if(node)
+        else_label = generate_label
+        registers.with_state do
+          emit(node.value[kw(:test)])
+        end
+        codes.jump_false(else_label)
+        registers.dec
+
+        end_label = generate_label
+        registers.with_state do
+          emit(node.value[kw(:then)])
+        end
+        codes.jump(end_label)
+        codes.label(else_label)
+
+        registers.with_state do
+          emit(node.value[kw(:else)])
+        end
+        codes.label(end_label)
+      end
+
+      def emit_apply(node)
+        case node.value[kw(:fntype)]
         when kw(:builtin)
-          name = form.value[kw(:target)]
-          arguments = form.value[kw(:args)]
+          name = node.value[kw(:target)]
+          arguments = node.value[kw(:args)]
           arity = arguments.value.size
           registers.with_state do
             arguments.value.each do |argument|
@@ -210,7 +242,9 @@ module Buckle
           end
 
           codes.call_builtin(name, arity, registers.current)
-          codes.ret_builtin(registers.current)
+          # pretty sure we don't need this...
+          # VM should place retun value in lowest register
+          #codes.ret_builtin(registers.current)
         else
           fail 'no udf application yet'
         end
