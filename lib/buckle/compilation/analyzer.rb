@@ -18,10 +18,16 @@ module Buckle
         Types::Symbol.new(:'=') => Types::Map.new({ arity: 2 })
       })
 
+      module Context
+        STATEMENT = Types::Keyword.new(:statement)
+        EXPRESSION = Types::Keyword.new(:expression)
+      end
+
       def initialize(error_klass, env = Types::Map.new)
         @error_klass = error_klass
         @env = env
 
+        @contekst = Context::EXPRESSION
         [:symbols, :globals].each do |sym|
           @env.value[Types::Keyword.new(sym)] ||= Types::Map.new
         end
@@ -30,7 +36,7 @@ module Buckle
       def build_ast(forms)
         analyzed = forms.value.map do |form|
           new_scope(env)
-          analyze(form)
+          analyze(form, Context::EXPRESSION)
         end
 
         return Types::Vector.new(analyzed), env
@@ -39,6 +45,7 @@ module Buckle
       private
 
       attr_reader :error_klass, :env
+      attr_accessor :contekst
 
       def error(message)
         raise error_klass, message
@@ -114,11 +121,11 @@ module Buckle
         BUILTINS
       end
 
-      def analyze(form)
+      def analyze(form, contekst)
         if form.number? || form.string? || form.keyword?
-          analyze_literal(form)
+          analyze_literal(form, contekst)
         elsif form.symbol?
-          analyze_symbol(form)
+          analyze_symbol(form, contekst)
         elsif form.list?
           analyze_list(form)
         else
@@ -126,21 +133,22 @@ module Buckle
         end
       end
 
-      def analyze_literal(form)
+      def analyze_literal(form, contekst)
         Types::Map.new({
           op: Types::Keyword.new(:literal),
           type: Types::Keyword.new(form.type),
+          context: contekst,
           expr: form
         })
       end
 
-      def analyze_symbol(symbol)
+      def analyze_symbol(symbol, contekst)
         if special?(symbol)
           error("cannot take value of special form #{symbol}")
         elsif function = builtin?(symbol)
           analyze_builtin(symbol, function)
         elsif var = resolve_var(symbol)
-          analyze_var(symbol, var)
+          analyze_var(symbol, var, contekst)
         else
           error("undefined symbol: #{symbol.value}")
         end
@@ -150,7 +158,7 @@ module Buckle
         if list.first.symbol? && special?(list.first)
           analyze_special(list.first, list.rest)
         elsif list.first.symbol? || list.first.list?
-          first = analyze(list.first)
+          first = analyze(list.first, Context::STATEMENT)
 
           if first.value[Types::Keyword.new(:op)] == Types::Keyword.new(:fn)
             analyze_application(first, list.rest)
@@ -167,11 +175,12 @@ module Buckle
         send(:"analyze_#{symbol.value}", rest)
       end
 
-      def analyze_var(symbol, var_id)
+      def analyze_var(symbol, var_id, contekst)
         Types::Map.new({
           op: Types::Keyword.new(:var),
           name: symbol,
-          id: var_id
+          id: var_id,
+          context: contekst
         })
       end
 
@@ -188,7 +197,7 @@ module Buckle
         elsif global_exists?(name)
           error("cannot redefine symbol #{name}")
         else
-          value = analyze(expr)
+          value = analyze(expr, Context::STATEMENT)
 
           # check name here again for nested def
           if global_exists?(name)
@@ -266,9 +275,9 @@ module Buckle
         else
           Types::Map.new({
             op: Types::Keyword.new(:if),
-            test: analyze(rest.first),
-            then: analyze(rest.second),
-            else: analyze(rest.third)
+            test: analyze(rest.first, Context::STATEMENT),
+            then: analyze(rest.second, Context::EXPRESSION),
+            else: analyze(rest.third, Context::EXPRESSION)
           })
         end
       end
@@ -285,7 +294,7 @@ module Buckle
             op: Types::Keyword.new(:apply),
             fntype: fntype,
             target: target,
-            args: analyze_subforms(args)
+            args: analyze_subforms(args, return_last: false)
           })
         end
       end
@@ -316,7 +325,7 @@ module Buckle
         scope = local_names.value.push(Types::Map.new) # ::Array, not Vector
 
         bindings.value.each_slice(2) do |name, expr|
-          analyzed_value = analyze(expr)
+          analyzed_value = analyze(expr, Context::STATEMENT)
           var_id = generate_id
           scope.last.value[name] = var_id
           attrs = { name: name, id: var_id, value: analyzed_value }
@@ -328,8 +337,16 @@ module Buckle
         analyzed
       end
 
-      def analyze_subforms(subforms)
-        result = subforms.value.map { |sf| analyze(sf) }
+      def analyze_subforms(subforms, return_last: true)
+        result = []
+        subforms.value.each_with_index do |sf, i|
+          if return_last && subforms.value.size == i + 1
+            result << analyze(sf, Context::EXPRESSION)
+          else
+            result << analyze(sf, Context::STATEMENT)
+          end
+        end
+
         Types::Vector.new(result)
       end
     end
