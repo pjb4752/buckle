@@ -162,6 +162,23 @@ module Buckle
 
           if first.value[Types::Keyword.new(:op)] == Types::Keyword.new(:fn)
             analyze_application(first, list.rest)
+          elsif list.first.symbol? && first.value[Types::Keyword.new(:id)]
+            var_id = resolve_var(list.first)
+
+            if var_id
+              symbol_table = env.value[Types::Keyword.new(:symbols)]
+              var = symbol_table.value[var_id]
+              ref = var.value[Types::Keyword.new(:value)]
+
+              if ref.value[Types::Keyword.new(:op)] == Types::Keyword.new(:fn)
+                analyze_application(ref, list.rest)
+              else
+                type = ref.value[Types::Keyword.new(:type)]
+                error("cannot apply instance of #{type}")
+              end
+            else
+              error("undefined symbo: #{list.first.value}")
+            end
           else
             type = first.value[Types::Keyword.new(:type)]
             error("cannot apply instance of #{type}")
