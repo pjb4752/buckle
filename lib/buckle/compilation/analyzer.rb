@@ -266,13 +266,20 @@ module Buckle
         elsif params.value.uniq.size < params.value.size
           error('duplicate params given in fn')
         else
+          params = analyze_params(params)
+          exprs = analyze_subforms(exprs)
+
+          if exprs.value.last
+            exprs.value.last.value[Types::Keyword.new(:return)] = true
+          end
+
           Types::Map.new({
             op: Types::Keyword.new(:fn),
             type: Types::Keyword.new(:udf),
             id: generate_id,
             arity: params.value.size,
-            params: analyze_params(params),
-            expr: analyze_subforms(exprs)
+            params: params,
+            expr: exprs
           })
         end
       end

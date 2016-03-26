@@ -1,4 +1,5 @@
 require 'buckle/types/all'
+require 'buckle/compilation/instructions/all'
 require 'securerandom'
 
 module Buckle
@@ -21,56 +22,14 @@ module Buckle
         @bytecodes = []
       end
 
-      def label(value)
-        bytecodes << ".#{value}"
-      end
-
-      def load_numlit(value, register)
-        load_lit('num', value, register)
-      end
-
-      def load_strlit(value, register)
-        load_lit('str', value, register)
-      end
-
-      def load_kwlit(value, register)
-        load_lit('kw', value, register)
-      end
-
-      def store_global(var_id, register)
-        bytecodes << "storg #{var_id}, #{register}"
-      end
-
-      def load_global(var_id, register)
-        bytecodes << "loadg #{register}, #{var_id}"
-      end
-
-      def call_builtin(name, arity, register)
-        bytecodes << "callb #{name}, #{arity}, #{register}"
-      end
-
-      def ret_builtin(register)
-        bytecodes << "retb #{register}"
-      end
-
-      def jump(label)
-        bytecodes << "jmp #{label}"
-      end
-
-      def jump_false(label)
-        bytecodes << "jmpnt #{label}"
-      end
-
-      protected
-
-      def load_lit(type, value, register)
-        bytecodes << "movl#{type} #{register}, #{value}"
+      def <<(bytecode)
+        bytecodes << bytecode
       end
     end
 
     class RegisterSet
       def initialize
-        @frames = [0x0000]
+        @frames = [0x0001]
       end
 
       def current
@@ -86,7 +45,7 @@ module Buckle
       end
 
       def with_state
-        last_value = current + 1
+        last_value = current
 
         yield
 
@@ -94,7 +53,7 @@ module Buckle
       end
 
       def with_frame
-        frames.push(0x0000)
+        frames.push(0x0001)
 
         yield
 
@@ -161,28 +120,40 @@ module Buckle
 
         case node.value[kw(:type)]
         when kw(:number)
-          codes.load_numlit(value, registers.inc)
+          codes << LoadNumlit.new(value, registers.current)
         when kw(:string)
-          codes.load_strlit(value, registers.inc)
+          codes << LoadStrlit.new(value, registers.current)
         when kw(:keyword)
-          codes.load_kwlit(value, registers.inc)
+          codes << LoadKwlit.new(value, registers.current)
         else
           fail 'invalid literal type'
+        end
+
+        if node.value[kw(:return)]
+          codes << ReturnFn.new(registers.current)
         end
       end
 
       def emit_var(node)
         var_id = node.value[kw(:id)]
+        var_ctx = node.value[kw(:context)]
         symbol_table = env.value[kw(:symbols)]
         var = symbol_table.value[var_id]
 
         case var.value[kw(:type)]
         when kw(:global)
-          codes.load_global(var_id, registers.inc)
+          codes << LoadGlobal.new(var_id, registers.current)
         when kw(:param)
-          # thinking
+          mappings = env.value[kw(:registers)]
+          register = mappings.value[var_id]
+
+          codes << Move.new(register, registers.current)
         else
           fail 'unknown var type'
+        end
+
+        if node.value[kw(:return)]
+          codes << ReturnFn.new(registers.current)
         end
       end
 
@@ -190,7 +161,11 @@ module Buckle
         var_id = node.value[kw(:id)]
 
         emit(node.value[kw(:init)])
-        codes.store_global(var_id, registers.current)
+        codes << StoreGlobal.new(var_id, registers.current)
+
+        if node.value[kw(:return)]
+          codes << ReturnFn.new(registers.current)
+        end
         # shouldn't need this, value is already in registers.current
         # codes.load_global(var_id, registers.current)
       end
@@ -201,32 +176,41 @@ module Buckle
         params = node.value[kw(:params)]
         var_ids = params.value.map { |p| p.value[kw(:id)] }
 
+        # TODO how do we handle passing fn as var?
+        label = Label.new(node.value[kw(:id)])
+        codes << label
         with_locals(var_ids) do
           exprs.value.each do |expr|
             emit(expr)
           end
         end
+        codes << MoveLabel.new(registers.current, label)
+
+        if node.value[kw(:return)]
+          codes << ReturnFn.new(registers.current)
+        end
       end
 
       def emit_if(node)
         else_label = generate_label
+        retpos = node.value[kw(:return)]
         registers.with_state do
           emit(node.value[kw(:test)])
         end
-        codes.jump_false(else_label)
-        registers.dec
+        codes << JumpFalse.new(registers.current, else_label)
 
         end_label = generate_label
         registers.with_state do
           emit(node.value[kw(:then)])
         end
-        codes.jump(end_label)
-        codes.label(else_label)
+        codes << Jump.new(end_label)
+        codes << Label.new(else_label)
 
         registers.with_state do
           emit(node.value[kw(:else)])
         end
-        codes.label(end_label)
+        codes << Label.new(end_label)
+        codes << ReturnFn.new(registers.current)
       end
 
       def emit_apply(node)
@@ -238,10 +222,12 @@ module Buckle
           registers.with_state do
             arguments.value.each do |argument|
               emit(argument)
+              registers.inc
             end
           end
 
-          codes.call_builtin(name, arity, registers.current)
+          codes << CallBuiltin.new(name, arity, registers.current)
+          codes << MoveRetval.new(registers.current)
           # pretty sure we don't need this...
           # VM should place retun value in lowest register
           #codes.ret_builtin(registers.current)
@@ -257,7 +243,8 @@ module Buckle
       def with_locals(var_ids)
         registers.with_frame do
           mappings = var_ids.each_with_object({}) do |id, obj|
-            obj[id] = registers.inc
+            obj[id] = registers.current
+            registers.inc
           end
 
           old_registers = env.value[kw(:registers)]
